@@ -1,0 +1,353 @@
+---
+title: "Coursera Machine Learning Project"
+author: "Ethan Schnelle"
+date: "October 23, 2019"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Human Activity Recognition 
+
+#### Background
+
+##### Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+##### In this project, the goal is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. These participants were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information on the Human Activity Study is available from the website here:  [*(http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset)*](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har) 
+
+#### Data
+
+[**Training Data** *(https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)*](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+[**Test Data** *(https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)*](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+[**Data Source** *(http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har)*](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har)
+
+#### Project Goal
+The goal of this project is to predict the manner in which participants did their exercise. This is the **"classe"** variable in the **Training** set. Any other variables are predictor factor candidates. This report describes our model was built, how cross validation was used, and provides my thoughts on the expected out of sample error, and why I made the choices I did. After choosing a model, it will be used to predict on the 20 different cases in the **Test** set.
+
+#### Background for Work
+**Reproduceability**
+To reproduce the results below use the following:
+
+- Seed is set at: **2019**   
+- R Packages Used: **caret** , **randomForest** and **rpart**
+
+**How the model was built**
+Our outcome variable is **"classe"**, a factor variable with 5 levels. For this data set, "participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in 5 different fashions:
+
+1. **Class A** - exactly according to the specification 
+2. **Class B** - throwing the elbows to the front       
+3. **Class C** - lifting the dumbbell only halfway      
+4. **Class D** - lowering the dumbbell only halfway     
+5. **Class E** - throwing the hips to the front         
+
+**Class A** corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes, [see Human Activity Recognition Study](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har).
+
+**Model Selection:**
+Four models will be tested: 
+
+- **decision tree** 
+- **Generalized Boosted Regression** with 3-fold cross validation
+- **random forest** with 3-fold and w/o cross validation
+
+Prediction evaluation will be based on maximized accuracy and minimized out-of-sample error. The model with the highest accuracy will be chosen as our final model.
+
+**Cross-validation**
+
+There is a large sample size with N= 19,622 in the **Training** data set. This let us to divide our **Training** set for cross-validation using random subsamples of the **Training** data: 
+
+1. **Sub-Training** - 70% of the original **Training** data, randomly selected without replacement
+2. **Sub-Testing**  - 30% balance of original **Training** data
+
+The models will be fitted on the **Sub-Training** data set, and tested on the **Sub-Testing** data for cross-validation. 
+
+Once the most accurate model is choosen, it will be tested on the original **Test** data set.
+
+**Expected out-of-sample error**
+
+The expected out-of-sample error will correspond to the quantity: 1-accuracy in the cross-validation data. Accuracy is the proportion of correct classified observation over the total sample in the **Sub-Testing** data set. Expected accuracy is the expected accuracy in the out-of-sample data set (i.e. **Testing** data set). Thus, the expected value of the out-of-sample error will be the expected number of missclassified observations/total observations in the **Testing** data set, which is the quantity: 1-accuracy found during the cross-validation.
+
+**Purpose of Model Algorithm Choices**
+
+Our outcome variable **"classe"** is an unordered factor variable. Given our chosen modeling methods, after cleaning, all available variables will be used for prediction and our error type is chosen to be 1-accuracy.  
+
+Features with all missing values will be discarded as well as features that are irrelevant. All other features will be kept as relevant variables.
+
+Decision tree and random forest algorithms are known for their ability of detecting the features that are important for classification.  Generalized Boosted Regression (GBM) algorithms for classification also perform well, but typically less so than Random Forest and more so than standard Decision Trees.  GBM will be run to see if it can perform as well or better and to confirm feature selection used in Random Forest.   Feature selection is in these modeling methods are built into the process, so it is not so necessary to do extensive factor variable selection in model preparation. 
+
+
+**Project Code and Results**
+
+#### Packages, Libraries, Seed
+
+##### R packages, and seed setting reproduceability, setting working directory
+```{r preparing}
+set.seed(2019) # set seed for reproducibility
+
+#Install Caret Package and library
+# install.packages("caret")
+library(caret) 
+#Install randomForest Package and library
+# install.packages("randomForest")
+library(randomForest) #Random forest for classification and regression
+#Install rpart Package and library
+# install.packages("rpart")
+library(rpart) # Regressive Partitioning and Regression trees
+library(rpart.plot) # Decision Tree plot
+
+#load parallel to use all machine cores for maximum processing speed
+library(doParallel)
+
+# setting working directory
+setwd("~/Documents/Personal/Coursera/Practical Machine Learning/Final Project")
+```
+
+#### Loading Data and Preparation
+
+- First we want to retrieve the data sets and load into R.
+- Then check the data for missing values and correct as necessary.
+- Uneeded variables will be dropped
+
+```{r dataloading}
+# After downloading both training and test data sets 
+# Some missing values are coded as string "#DIV/0!" or "" or "NA" - these will be changed to NA.
+# We notice that both data sets contain columns with all missing values - these will be deleted.  
+
+# Loading the training data set into my R session replacing all missing with "NA"
+trainingset <- read.csv("pml-training.csv", na.strings=c("NA","#DIV/0!", ""))
+# Loading the testing data set 
+testingset <- read.csv("pml-testing.csv", na.strings=c("NA","#DIV/0!", ""))
+
+# Check dimensions for number of variables and number of observations
+dim(trainingset)
+dim(testingset)
+
+# Delete columns with all missing values
+trainingset<-trainingset[,colSums(is.na(trainingset)) == 0]
+testingset <-testingset[,colSums(is.na(testingset)) == 0]
+
+# Some variables are irrelevant to our current project: user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp, new_window, and  num_window (columns 1 to 7). We can delete these variables.
+trainingset   <-trainingset[,-c(1:7)]
+testingset    <- testingset[,-c(1:7)]
+
+# and have a look at our new datasets:
+dim(trainingset)
+dim(testingset)
+head(trainingset,1)
+head(testingset,1)
+```
+
+#### Partitioning the training data set to allow cross-validation
+
+- The training data set contains 53 variables and 19622 obs after removing columns with missing
+- The testing data set contains 53 variables and 20 obs.
+- In order to perform cross-validation, the training data set is partionned into 2 sets: subTraining (70%) and subTest (30%). Random subsampling without replacement.
+  
+```{r cvpartitions}
+subsamples <- createDataPartition(y=trainingset$classe, p=0.7, list=FALSE)
+subTraining <- trainingset[subsamples, ] 
+subTesting <- trainingset[-subsamples, ]
+dim(subTraining)
+dim(subTesting)
+head(subTraining,1)
+head(subTesting,1)
+```
+
+
+#### A look at the Data
+
+The variable "classe" contains 5 levels: A, B, C, D and E. A plot of the outcome variable will allow us to see the frequency of each levels in the subTraining data set and compare one another.
+```{r looksie}
+plot(subTraining$classe, col="blue", main="Bar Plot of levels of the variable classe within the subTraining data set", xlab="classe levels", ylab="Frequency")
+```
+
+From the graph above, we can see that each level frequency is within the same order of magnitude of each other. Level A is the most frequent with more than 4000 occurrences while level D is the least frequent with about 2500 occurrences.
+
+#### Run Models on All Parallel Cores less 1
+```{r useCores}
+library(doParallel)
+cores <- detectCores() - 1
+registerDoParallel(cores = cores)
+```
+
+### Class Prediction Model Evaluations 
+
+#### First prediction model: Using Decision Tree
+```{r modeldt}
+# fitting Decision Tree model:
+modeldt <- rpart(classe ~ ., data=subTraining, method="class")
+# Predicting:
+predict_dt <- predict(modeldt, subTesting, type = "class")
+
+# Plot of the Decision Tree
+rpart.plot(modeldt, main="Classification Tree", extra=102, under=TRUE, faclen=0)
+```
+
+```{r confmtrxpreddt }
+# Test results on our subTesting data set:
+confusionMatrix(predict_dt, subTesting$classe)
+```
+
+
+#### Second prediction model: Using GBM with Cross Validation (CV)
+```{r gbm_caret_train_w_cv}
+# guidance from https://topepo.github.io/caret/model-training-and-tuning.html
+
+# The function trainControl can be used to specifiy the type of resampling:
+fitControl <- trainControl(## 3-fold CV
+                           method = "repeatedcv",
+                           number = 3,
+                           ## repeated ten times
+                           repeats = 3)
+
+# fitting GBM model using repeated cross-validation
+set.seed(2019)
+modelgbm <- train(classe ~. , data = subTraining, 
+                 method = "gbm", 
+                 metric = 'Accuracy',
+                 trControl = fitControl,
+                 ## This last option is actually one
+                 ## for gbm() that passes through
+                 verbose = FALSE)
+print(modelgbm)
+
+```
+
+
+```{r predict_gbm}
+# Predicting GBM:
+predict_gbm <- predict(modelgbm, subTesting)
+
+```
+
+```{r confmtrxpred_gbm }
+# Test results on our subTesting data set:
+confusionMatrix(predict_gbm, subTesting$classe)
+```
+
+
+#### Third prediction model: Using Random Forest with Cross Validation (CV)
+```{r rf_caret_train_w_cv}
+# guidance from https://topepo.github.io/caret/model-training-and-tuning.html
+
+# The function trainControl can be used to specifiy the type of resampling:
+fitControl <- trainControl(## 3 fold CV
+                           method = "repeatedcv",
+                           number = 3,
+                           ## repeated ten times
+                           repeats = 3)
+
+# fitting Random Forest model using repeated cross-validation
+set.seed(2019)
+modelrf_cv <- train(classe ~. , data = subTraining, 
+                 method = "rf", 
+                 metric = 'Accuracy',
+                 trControl = fitControl,
+                 ## This last option is actually one
+                 ## for gbm() that passes through
+                 verbose = FALSE)
+print(modelrf_cv)
+
+```
+
+```{r predict_rf}
+# Predicting Random Forest with CV:
+predict_rf_cv <- predict(modelrf_cv, subTesting)
+```
+
+```{r confmtrxpred_rf }
+# Test results of Random Forest with CV on our subTesting data set:
+confusionMatrix(predict_rf_cv, subTesting$classe)
+```
+
+
+#### Fourth prediction model: Using Random Forest without Cross Validation (CV)
+```{r modelrf}
+# fitting Random Forest model without cross-validation:
+modelrf <- randomForest(classe ~. , data=subTraining, method="class")
+```
+
+```{r modelrf_smry}
+# Print Random Forest without CV Model Summary:
+print(modelrf)
+```
+
+```{r modelrf_predict}
+# Predicting Random Forest without CV:
+predict_rf <- predict(modelrf, subTesting, type = "class")
+```
+
+```{r modelrf_confmtrx}
+# Test results of Random Forest without CV on our subTesting data set:
+confusionMatrix(predict_rf, subTesting$classe)
+```
+
+#### Check Variable Importance Feature Selection in Random Forest and GBM Models
+
+**Feature Importance for Random Forest Model (RF)**
+``` {r importancerf}
+ varImpPlot(modelrf,type=2)
+ imp <- as.data.frame(varImp(modelrf))
+ imp <- data.frame(names   = rownames(imp), overall = imp$Overall)
+ options(max.print=60)
+ imp[order(imp$overall,decreasing = T),]
+```
+
+Top 5 Important features in predicting "classe" using Random Forest Model are found to be:
+
+- roll_belt
+- yaw_belt
+- picth_forearm
+- magnet_dumbbell_z 
+- magnet_dumbbell_y
+
+**Feature Importance for Generalized Boosted Regression (GBM)**
+```{r gbmvarImp}
+par(las=2)
+par(mar=c(5,15,4,2))
+par(cex=0.60)
+summary(modelgbm)
+```
+
+Top 5 Important features in predicting "classe" using GBM Model are found to be:
+
+- roll_belt
+- picth_forearm
+- yaw_belt
+- magnet_dumbbell_z 
+- magnet_dumbbell_y
+
+In addition to both model algorithms performed well based on accuracy, feature importance ranking with Random Forest (RF) and Generalized Boosted Regression (GBM) models were very similar.  
+
+
+### Decision on Model Selection
+
+As anticipated, the Random Forest algorithm performed better than a Decision Tree model and slightly better than Generalized Boosted Regression (GBM) model. Continued testing showed that the Random Forest model Accuracy was near 99.4% compared to near 72.2% for Decision Tree model and for GBM Model around 96.2%. The 4th model tested a Random Forest model (w/o 3-fold CV) is choosen due to simplicity and high accuracy using 500 Trees (ntree=500) and 7 Ranodm Variable Selection per iterration (mtry=7). The expected out-of-sample error is estimated at 0.006, or 0.6% calculated as 1 - accuracy for predictions made against the cross-validation set.  The feature variable selection in our final model selection (Random Forest) is supported by feature importance findings in our Generalized Boosted Regression (GBM) model further validating our selected modle based on features for prediction. 
+
+Our evaluation **Test** data set comprises 20 cases and with an accuracy above 99% on our cross-validation data, we should see few, or none, of the test sample observations to be missclassified based on the Random Forest Model selected.
+
+
+### Model Predition against Test Set Submission
+```{r submission}
+# predict outcome levels on the original Testing data set using Random Forest algorithm
+predictfinal <- predict(modelrf, testingset, type="class")
+predictfinal
+# predictions to output files by observation for project submission
+pml_write_files = function(x){
+  n = length(x)
+  path <- "answers"
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=file.path(path,filename),quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(predictfinal)
+```
+
